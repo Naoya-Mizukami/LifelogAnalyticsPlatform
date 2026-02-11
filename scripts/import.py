@@ -1,142 +1,174 @@
 import csv
 import hashlib
+from pathlib import Path
 import psycopg2 as pc
 from psycopg2.extras import execute_values
-from pathlib import Path
 
 
-
-config = {
-    'host': 'localhost',
-    'port': 5432,
-    'dbname': 'llap',
-    'user': 'postgres',
-    'password': 'postgres'
+# =========================
+# DB Config
+# =========================
+DB_CONFIG = {
+    "host": "localhost",
+    "port": 5432,
+    "dbname": "llap",
+    "user": "postgres",
+    "password": "postgres",
 }
 
+# =========================
+# CONSTANTS
+# =========================
+LLAP_DIR = Path(__file__).resolve().parents[1]
+INPUT_DIR = LLAP_DIR / "data" / "input"
+SQL_DIR = LLAP_DIR / "sql"
+CATEGORIES = ["card", "study", "weight"]
 
+DIR_BY_CAT = [INPUT_DIR / category for category in CATEGORIES]
 
-llap_dir = Path(__file__).resolve().parents[1]
-input_dir = llap_dir.joinpath("data", "input")
-crd_dir = input_dir.joinpath("card")
-std_dir = input_dir.joinpath("study")
-wgt_dir = input_dir.joinpath("weight")
-sql_dir = llap_dir.joinpath("sql")
+SQL_HISTORY = SQL_DIR / "01_INSERT_LLAP_HISTORY.sql"
 
-# 履歴テーブルへのINSERT SQL
-SQL_HISTORY = sql_dir.joinpath("01_INSERT_LLAP_HISTORY.sql")
+SQL_RAW_BY_CAT = {
+    "card": SQL_DIR / "02_01_INSERT_LLAP_CSV_RAW_EXPENSE.sql",
+    "study": SQL_DIR / "02_02_INSERT_LLAP_CSV_RAW_STUDY.sql",
+    "weight": SQL_DIR / "02_03_INSERT_LLAP_CSV_RAW_WEIGHT.sql"
+}
 
-# csvからrawへのロードSQL
-SQL_RAW_EXPENSE = sql_dir.joinpath("02_01_INSERT_LLAP_CSV_RAW_EXPENSE.sql")
-SQL_RAW_STUDY = sql_dir.joinpath("02_02_INSERT_LLAP_CSV_RAW_STUDY.sql")
-SQL_RAW_WEIGHT = sql_dir.joinpath("02_03_INSERT_LLAP_CSV_RAW_WEIGHT.sql")
-
-RAW_JOBS = [
-    ("card", SQL_RAW_EXPENSE, crd_dir),
-    ("study", SQL_RAW_STUDY,   std_dir),
-    ("weight", SQL_RAW_WEIGHT,  wgt_dir),
+MEISAI_HEADER = [
+    "ご利用者", "カテゴリ", "ご利用日", "ご利用先など", "ご利用金額(￥)",
+    "支払区分", "今回回数", "訂正サイン", "お支払い金額(￥)",
+    "国内／海外", "摘要", "備考"
 ]
 
-MEISAI_HEADER = ["ご利用者","カテゴリ","ご利用日","ご利用先など","ご利用金額(￥)","支払区分","今回回数","訂正サイン","お支払い金額(￥)","国内／海外","摘要","備考"]
+IMPORT_METHOD = "import.py"
 
-# stg/mart へのINSERT SQL
-SQL_MART_EXPENSE = sql_dir.joinpath("03_01_INSERT_LLAP_STG_MART_EXPENSE.sql")
-SQL_MART_STUDY = sql_dir.joinpath("03_02_INSERT_LLAP_STG_MART_STUDY.sql")
-SQL_MART_WEIGHT = sql_dir.joinpath("03_03_INSERT_LLAP_STG_MART_WEIGHT.sql")
-
-MART_JOBS = [SQL_MART_EXPENSE, SQL_MART_STUDY, SQL_MART_WEIGHT]
-
+# =========================
+# Helpers
+# =========================
+def read_sql(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
 
 
-def read_sql(sql_path: Path) -> str:
-    # SQLファイルを読み込み、文字列で返す。
-    return sql_path.read_text(encoding="utf-8")
+def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as file_obj:
+        for chunk in iter(lambda: file_obj.read(chunk_size), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
-def sha256_file(csv_path: Path, chunk_size: int = 1024 * 1024) -> str:
-    # ファイルの中身からSHA256ハッシュ値を計算して返す。
-    h = hashlib.sha256()
-    with csv_path.open("rb") as f:
-        for chunk in iter(lambda: f.read(chunk_size), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
-def build_rows_for_insert(csv_path: Path, category: str, encoding: str = "utf-8") -> list[tuple]:
-    file_hash = sha256_file(csv_path)
-    file_name = csv_path.name
+def collect_unique_files_by_hash() -> list[dict]:
+    by_hash: dict[str, dict] = {}
+
+    for data_dir in DIR_BY_CAT:
+        if not data_dir.exists():
+            continue
+
+        for csv_path in sorted(data_dir.glob("*.csv")):
+            file_hash = sha256_file(csv_path)
+            by_hash.setdefault(
+                file_hash,
+                {
+                    "category": data_dir.name,
+                    "path": csv_path,
+                    "file_hash": file_hash,
+                    "file_name": csv_path.name
+                },
+            )
+
+    return list(by_hash.values())
+
+
+def build_raw_records(file_info: dict) -> list[tuple]:
     rows: list[tuple] = []
+    category_name = file_info["category"]
+    csv_path: Path = file_info["path"]
+    file_hash = file_info["file_hash"]
+    file_name = file_info["file_name"]
 
-    with csv_path.open("r", encoding=encoding, newline="") as f:
-        reader = csv.reader(f)
+    with csv_path.open("r", encoding="utf-8", newline="") as file_obj:
+        reader = csv.reader(file_obj)
 
-        if category == "card":
+        if category_name == "card":
             record_flag = False
-            cols_cnt = len(MEISAI_HEADER)
+            column_count = len(MEISAI_HEADER)
 
-            for row in reader:
-                if not row:
+            for row_values in reader:
+                if not row_values:
                     continue
-                if row == MEISAI_HEADER:
+                if row_values == MEISAI_HEADER:
                     record_flag = True
                     continue
                 if not record_flag:
                     continue
-                if len(row) != cols_cnt:
+                if len(row_values) != column_count:
                     continue
-                rows.append((file_hash, file_name, *row))
+
+                rows.append((file_hash, file_name, *row_values))
+
         else:
-            next(reader, None)  # header skip
-            for row in reader:
-                if not row:
+            next(reader, None)
+            for row_values in reader:
+                if not row_values:
                     continue
-                rows.append((file_hash, file_name, *row))
+                rows.append((file_hash, file_name, *row_values))
 
     return rows
 
-def collect_input_files(raw_jobs) -> list[tuple[str,str,str,str]]:
-    method = "import.py"
-    rows = []
-    for category, _, data_dir in raw_jobs:
-        for csv_path in sorted(data_dir.glob("*.csv")):
-            rows.append((sha256_file(csv_path), csv_path.name, category, method))
-    return rows
 
-
-def main():
-    rows = collect_input_files(RAW_JOBS)
-
-    if not rows:
+# =========================
+# Main
+# =========================
+def main() -> None:
+    files = collect_unique_files_by_hash()
+    if not files:
         print("No csv files found.")
         return
 
-    try:
-        with pc.connect(**config) as conn:
-            with conn.cursor() as cur:
-                # 1) 履歴INSERT
-                print("Inserting llap_history...")
-                sql_hist = read_sql(SQL_HISTORY)
-                execute_values(cur, sql_hist, rows, page_size=500)
+    # SQLファイルのロード
+    sql_history = read_sql(SQL_HISTORY)
+    sql_raw_by_cat = {category_name: read_sql(sql_path) for category_name, sql_path in SQL_RAW_BY_CAT.items()}
 
-                # 2) rawロード
-                print("Inserting llap_csv_raw_...")
-                for category, sql_path, data_dir in RAW_JOBS:
-                    print(f" Processing category: {category} ...")
-                    sql_csv_raw = read_sql(sql_path)
+    # DB接続と処理
+    with pc.connect(**DB_CONFIG) as conn:
+        try:
+            with conn.cursor() as cursor:
+                print(f"Importing {len(files)} files...")
+                history_rows = [
+                    (file_info["file_hash"], file_info["file_name"], file_info["category"], IMPORT_METHOD)
+                    for file_info in files
+                ]
+                execute_values(cursor, sql_history, history_rows, page_size=500)
 
-                    for csv_path in sorted(data_dir.glob("*.csv")):
-                        print(f"  Loading file: {csv_path.name} ...")
-                        records = build_rows_for_insert(csv_path, category)
-                        if records:
-                            print(f"  Inserting {len(records)} records from {csv_path.name} ...")
-                            execute_values(cur, sql_csv_raw, records, page_size=500)
+                inserted_hashes = {row[0] for row in cursor.fetchall()}
 
-                # 3) stg/mart（例）
-                for sql_path in MART_JOBS:
-                    print(f"Inserting into stg/mart table using {sql_path.name} ...")
-                    cur.execute(read_sql(sql_path))
+                if not inserted_hashes:
+                    print("No new files (by file_hash). Nothing to do.")
+                    conn.commit()
+                    return
 
-    except pc.Error as e:
-        print(f"DB Error: {e}")
+                print(f"Inserting raw data for {len(inserted_hashes)} new files...")
+                for file_info in files:
+                    if not file_info["file_hash"] in inserted_hashes:
+                        print(f"  Skipping (already imported): {file_info['path'].name}")
+                        continue
 
-    
+                    category_name = file_info["category"]
+                    records: list[tuple] = []
+                    records.extend(build_raw_records(file_info))
+
+                    if records:
+                        print(f"  Inserting raw data from: {file_info['path'].name} ({len(records)} rows)")
+                        execute_values(cursor, sql_raw_by_cat[category_name], records, page_size=500)
+
+            conn.commit()
+            print(f"Done. new file_hash count = {len(inserted_hashes)}")
+
+        except Exception:
+            print("Error occurred. Rolling back...")
+            conn.rollback()
+            raise
+
+
 if __name__ == "__main__":
     main()
