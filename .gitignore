@@ -1,0 +1,11 @@
+# data / logs (PII)
+data/input/
+memo.md
+
+# env
+.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
