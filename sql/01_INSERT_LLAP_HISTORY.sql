@@ -13,4 +13,5 @@ INSERT INTO llap_history.input_files_history (
 	category,
 	method
 ) VALUES %s
-ON CONFLICT (file_hash) DO NOTHING;
+ON CONFLICT (file_hash) DO NOTHING
+RETURNING file_hash;
