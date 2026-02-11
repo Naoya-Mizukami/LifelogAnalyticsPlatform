@@ -1,5 +1,7 @@
 # data / logs (PII)
-data/input/
+data/input/card
+data/input/study
+data/input/weight
 memo.md
 
 # env
