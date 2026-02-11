@@ -22,8 +22,8 @@ DB_CONFIG = {
 LLAP_DIR = Path(__file__).resolve().parents[1]
 INPUT_DIR = LLAP_DIR / "data" / "input"
 SQL_DIR = LLAP_DIR / "sql"
-CATEGORIES = ["card", "study", "weight"]
 
+CATEGORIES = ["card", "study", "weight"]
 DIR_BY_CAT = [INPUT_DIR / category for category in CATEGORIES]
 
 SQL_HISTORY = SQL_DIR / "01_INSERT_LLAP_HISTORY.sql"
