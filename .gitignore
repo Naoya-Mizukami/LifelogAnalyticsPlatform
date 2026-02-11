@@ -1,7 +1,6 @@
 # data / logs (PII)
-data/input/card
-data/input/study
-data/input/weight
+/data/input/*
+!/data/input/**/.gitkeep
 memo.md
 
 # env
