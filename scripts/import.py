@@ -52,9 +52,18 @@ def read_sql(sql_path: Path) -> str:
     # SQLファイルを読み込み、文字列で返す。
     return sql_path.read_text(encoding="utf-8")
 
-def replace_values(csv_path: Path, category: str, encoding: str = "utf-8"):
-    # csvファイルを読み込み、バインド変数用のタプルリストを返す。
-    records = []
+def sha256_file(csv_path: Path, chunk_size: int = 1024 * 1024) -> str:
+    # ファイルの中身からSHA256ハッシュ値を計算して返す。
+    h = hashlib.sha256()
+    with csv_path.open("rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def build_rows_for_insert(csv_path: Path, category: str, encoding: str = "utf-8") -> list[tuple]:
+    file_hash = sha256_file(csv_path)
+    file_name = csv_path.name
+    rows: list[tuple] = []
 
     with csv_path.open("r", encoding=encoding, newline="") as f:
         reader = csv.reader(f)
@@ -73,23 +82,15 @@ def replace_values(csv_path: Path, category: str, encoding: str = "utf-8"):
                     continue
                 if len(row) != cols_cnt:
                     continue
-                records.append(tuple(row))
+                rows.append((file_hash, file_name, *row))
         else:
-            next(reader, None)  # ← ヘッダ1行スキップ
+            next(reader, None)  # header skip
             for row in reader:
                 if not row:
                     continue
-                records.append(tuple(row))
-    
-    return records
+                rows.append((file_hash, file_name, *row))
 
-def sha256_file(csv_path: Path, chunk_size: int = 1024 * 1024) -> str:
-    # ファイルの中身からSHA256ハッシュ値を計算して返す。
-    h = hashlib.sha256()
-    with csv_path.open("rb") as f:
-        for chunk in iter(lambda: f.read(chunk_size), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    return rows
 
 def collect_input_files(raw_jobs) -> list[tuple[str,str,str,str]]:
     method = "import.py"
@@ -120,18 +121,13 @@ def main():
                 for category, sql_path, data_dir in RAW_JOBS:
                     print(f" Processing category: {category} ...")
                     sql_csv_raw = read_sql(sql_path)
-                    all_records = []
 
                     for csv_path in sorted(data_dir.glob("*.csv")):
                         print(f"  Loading file: {csv_path.name} ...")
-                        records = replace_values(csv_path, category)
+                        records = build_rows_for_insert(csv_path, category)
                         if records:
                             print(f"  Inserting {len(records)} records from {csv_path.name} ...")
                             execute_values(cur, sql_csv_raw, records, page_size=500)
-
-                    if all_records:  # 空なら実行しない
-                        print(f"  Inserting {len(all_records)} records into raw table...")
-                        execute_values(cur, sql_csv_raw, all_records, page_size=500)
 
                 # 3) stg/mart（例）
                 for sql_path in MART_JOBS:

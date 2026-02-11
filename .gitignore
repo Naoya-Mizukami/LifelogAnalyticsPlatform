@@ -1,6 +1,6 @@
 # data / logs (PII)
-/data/input/*
-!/data/input/**/.gitkeep
+/data/**
+!/data/**/.gitkeep
 memo.md
 
 # env
