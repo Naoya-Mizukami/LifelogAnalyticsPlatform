@@ -1,9 +1,14 @@
-from pathlib import Path
+from dotenv import load_dotenv
+import os
 
-path = Path(__file__).resolve().parents[1].joinpath("data", "input", "card", "202602meisai.csv")
+load_dotenv()
 
-text = path.read_text(encoding="utf-8")
+DB_CONFIG = {
+    "host": os.getenv("PGHOST"),
+    "port": int(os.getenv("PGPORT")),
+    "dbname": os.getenv("PGDATABASE"),
+    "user": os.getenv("PGUSER"),
+    "password": os.getenv("PGPASSWORD")
+}
 
-text_replace = text.replace("2025", "9999")
-
-print(text_replace)
+print(f"Database Config: {DB_CONFIG}")

@@ -1,4 +1,6 @@
 import csv
+import os
+from dotenv import load_dotenv
 import hashlib
 from pathlib import Path
 import psycopg2 as pc
@@ -8,13 +10,16 @@ from psycopg2.extras import execute_values
 # =========================
 # DB Config
 # =========================
+# 環境変数からDB接続情報を取得（.envファイルで設定）
+load_dotenv()
 DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "llap",
-    "user": "postgres",
-    "password": "postgres",
+    "host": os.getenv("PGHOST"),
+    "port": int(os.getenv("PGPORT")),
+    "dbname": os.getenv("PGDATABASE"),
+    "user": os.getenv("PGUSER"),
+    "password": os.getenv("PGPASSWORD")
 }
+
 
 # =========================
 # CONSTANTS
@@ -46,10 +51,12 @@ IMPORT_METHOD = "import.py"
 # Helpers
 # =========================
 def read_sql(path: Path) -> str:
+    # SQLファイルをUTF-8で読み込む
     return path.read_text(encoding="utf-8")
 
 
 def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    # ファイルのSHA-256ハッシュを計算する
     hasher = hashlib.sha256()
     with path.open("rb") as file_obj:
         for chunk in iter(lambda: file_obj.read(chunk_size), b""):
@@ -58,6 +65,7 @@ def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
 
 
 def collect_unique_files_by_hash() -> list[dict]:
+    # ディレクトリ内のCSVファイルをハッシュで一意に識別して収集する
     by_hash: dict[str, dict] = {}
 
     for data_dir in DIR_BY_CAT:
@@ -80,6 +88,7 @@ def collect_unique_files_by_hash() -> list[dict]:
 
 
 def build_raw_records(file_info: dict) -> list[tuple]:
+    # CSVファイルの内容を読み込んで、DBに挿入するためのレコードのリストを構築する
     rows: list[tuple] = []
     category_name = file_info["category"]
     csv_path: Path = file_info["path"]
