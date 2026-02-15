@@ -177,7 +177,8 @@ def main() -> None:
             print("Error occurred. Rolling back...")
             conn.rollback()
             raise
-
+    
+    print("All operations completed successfully.")
 
 if __name__ == "__main__":
     main()
