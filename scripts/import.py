@@ -132,6 +132,7 @@ def main() -> None:
     files = collect_unique_files_by_hash()
     if not files:
         print("No csv files found.")
+        print("Finished all.")
         return
 
     # SQLファイルのロード
