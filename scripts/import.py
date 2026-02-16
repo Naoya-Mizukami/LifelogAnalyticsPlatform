@@ -131,8 +131,7 @@ def build_raw_records(file_info: dict) -> list[tuple]:
 def main() -> None:
     files = collect_unique_files_by_hash()
     if not files:
-        print("No csv files found.")
-        print("Finished all.")
+        print("No csv files found. Nothing to do.")
         return
 
     # SQLファイルのロード
